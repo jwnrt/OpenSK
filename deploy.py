@@ -40,7 +40,7 @@ from tockloader.exceptions import TockLoaderException
 import tools.configure
 from tools.deploy_partition import create_metadata, load_priv_key, pad_to
 
-PROGRAMMERS = frozenset(("jlink", "openocd", "pyocd", "nordicdfu", "none"))
+PROGRAMMERS = frozenset(("jlink", "openocd", "pyocd", "nordicdfu", "opentitantool", "none"))
 
 # This structure allows us to support out-of-tree boards as well as (in the
 # future) more achitectures.
@@ -116,6 +116,27 @@ nrf52840dk_opensk_board = OpenSKBoard(
     nordic_dfu=False,
 )
 
+earlgrey_cw310_opensk_board = OpenSKBoard(
+    path="third_party/tock/boards/opentitan/earlgrey-cw310-opensk",
+    arch="riscv32imc-unknown-none-elf",
+    page_size=2048,
+    kernel_address=0x2000_0400,
+    padding_address=None,
+    firmware_size=None,
+    metadata_address=None,
+    app_ldscript="opentitan_layout.ld",
+    app_address=0x2003_0000,
+    storage_address=0x200F_0000,
+    storage_size=0xA000,
+    pyocd_target=None,
+    openocd_board=None,
+    openocd_options=[],
+    openocd_commands={},
+    jlink_if=None,
+    jlink_device=None,
+    nordic_dfu=False,
+)
+
 SUPPORTED_BOARDS = {
     "nrf52840dk_opensk":
         nrf52840dk_opensk_board,
@@ -154,6 +175,8 @@ SUPPORTED_BOARDS = {
             kernel_address=0x1000,
             nordic_dfu=True,
         ),
+    "earlgrey-cw310-opensk":
+      earlgrey_cw310_opensk_board,
 }
 
 # The following value must match the one used in the file
@@ -828,7 +851,7 @@ class OpenSKInstaller:
                  "and the board are correct."))
           return 1
 
-    elif self.args.programmer in ("pyocd", "nordicdfu", "none"):
+    elif self.args.programmer in ("pyocd", "nordicdfu", "opentitantool", "none"):
       dest_file = f"{CARGO_TARGET_DIR}/{self.args.board}_merged.hex"
       os.makedirs(CARGO_TARGET_DIR, exist_ok=True)
       self.create_hex_file(dest_file)
@@ -875,6 +898,13 @@ class OpenSKInstaller:
         ).returncode
         if dfu_return_code != 0:
           return dfu_return_code
+      if self.args.programmer == "opentitantool":
+        # Convert the HEX to a BIN file
+        bin_file = f"{CARGO_TARGET_DIR}/{self.args.board}_merged.bin"
+        info(f"Converting to BIN file: {bin_file}")
+        self.checked_command(["llvm-objcopy", "-Iihex", "-Obinary", dest_file, bin_file])
+        info("Flashing BIN file")
+        self.checked_command(["opentitantool", "bootstrap", bin_file])
 
     # Configure OpenSK through vendor specific command if needed
     if self.args.programmer == "none":
