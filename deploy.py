@@ -749,9 +749,9 @@ class OpenSKInstaller:
 
   def check_prerequisites(self):
     """Checks versions of the used tools, exits on version mismatch."""
-    if not tockloader.__version__.startswith("1.5."):
+    if not tockloader.__version__.startswith("1.10."):
       fatal(("Your version of tockloader seems incompatible: found "
-             f"{tockloader.__version__}, expected 1.5.x."))
+             f"{tockloader.__version__}, expected 1.10.x."))
 
     if self.args.programmer == "jlink":
       assert_mandatory_binary("JLinkExe")

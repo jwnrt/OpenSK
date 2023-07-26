@@ -1,5 +1,5 @@
 # General setup
-tockloader == 1.5
+tockloader == 1.10
 six
 intelhex
 
