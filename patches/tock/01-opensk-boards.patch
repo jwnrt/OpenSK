@@ -1,8 +1,16 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index c1f5f800d..8c4eba71b 100644
+index c1f5f800d..d3768115d 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -29,7 +29,13 @@ members = [
+@@ -16,6 +16,7 @@ members = [
+     "boards/nano_rp2040_connect",
+     "boards/arty_e21",
+     "boards/opentitan/earlgrey-cw310",
++    "boards/opentitan/earlgrey-cw310-opensk",
+     "boards/esp32-c3-devkitM-1",
+     "boards/clue_nrf52840",
+     "boards/hail",
+@@ -29,7 +30,13 @@ members = [
      "boards/microbit_v2",
      "boards/nordic/nrf52840dk",
      "boards/nordic/nrf52840dk_demo",
