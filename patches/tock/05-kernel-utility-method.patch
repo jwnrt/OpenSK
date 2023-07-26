@@ -1,8 +1,8 @@
 diff --git a/kernel/src/syscall_driver.rs b/kernel/src/syscall_driver.rs
-index 0e2943fe4..3b5b42486 100644
+index 562e48dc3..8a850bcd4 100644
 --- a/kernel/src/syscall_driver.rs
 +++ b/kernel/src/syscall_driver.rs
-@@ -102,6 +102,19 @@ impl CommandReturn {
+@@ -106,6 +106,19 @@ impl CommandReturn {
          self.0
      }
  

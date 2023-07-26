@@ -1,22 +1,23 @@
 diff --git a/boards/components/src/lib.rs b/boards/components/src/lib.rs
-index 92d45f7e3..51041545b 100644
+index a10409756..6df876a6f 100644
 --- a/boards/components/src/lib.rs
 +++ b/boards/components/src/lib.rs
-@@ -64,3 +64,4 @@ pub mod tickv;
+@@ -79,4 +79,4 @@ pub mod tickv;
  pub mod touch;
  pub mod udp_driver;
  pub mod udp_mux;
+-pub mod usb;
 +pub mod usb_ctap;
 diff --git a/boards/components/src/usb_ctap.rs b/boards/components/src/usb_ctap.rs
 new file mode 100644
-index 000000000..eed34a268
+index 000000000..20be82043
 --- /dev/null
 +++ b/boards/components/src/usb_ctap.rs
 @@ -0,0 +1,87 @@
 +//! Component for CTAP over USB.
 +
-+use capsules::usb::usb_ctap::CtapUsbSyscallDriver;
-+use capsules::usb::usbc_ctap_hid::ClientCtapHID;
++use capsules_extra::usb::usb_ctap::CtapUsbSyscallDriver;
++use capsules_extra::usb::usbc_ctap_hid::ClientCtapHID;
 +use core::mem::MaybeUninit;
 +use kernel::capabilities;
 +use kernel::component::Component;
@@ -27,8 +28,8 @@ index 000000000..eed34a268
 +#[macro_export]
 +macro_rules! usb_ctap_component_helper {
 +    ($C:ty $(,)?) => {{
-+        use capsules::usb::usb_ctap::CtapUsbSyscallDriver;
-+        use capsules::usb::usbc_ctap_hid::ClientCtapHID;
++        use capsules_extra::usb::usb_ctap::CtapUsbSyscallDriver;
++        use capsules_extra::usb::usbc_ctap_hid::ClientCtapHID;
 +        use core::mem::MaybeUninit;
 +
 +        static mut hid: MaybeUninit<ClientCtapHID<'static, 'static, $C>> = MaybeUninit::uninit();
@@ -78,7 +79,7 @@ index 000000000..eed34a268
 +    );
 +    type Output = &'static CtapUsbSyscallDriver<'static, 'static, C>;
 +
-+    unsafe fn finalize(self, s: Self::StaticInput) -> Self::Output {
++    fn finalize(self, s: Self::StaticInput) -> Self::Output {
 +        let grant_cap = create_capability!(capabilities::MemoryAllocationCapability);
 +
 +        let usb_ctap = s.0.write(ClientCtapHID::new(
@@ -100,24 +101,24 @@ index 000000000..eed34a268
 +        usb_driver
 +    }
 +}
-diff --git a/capsules/src/driver.rs b/capsules/src/driver.rs
-index f189dfd09..c48c7e094 100644
---- a/capsules/src/driver.rs
-+++ b/capsules/src/driver.rs
-@@ -29,6 +29,8 @@ pub enum NUM {
-     UsbUser               = 0x20005,
+diff --git a/capsules/core/src/driver.rs b/capsules/core/src/driver.rs
+index 7f1095ee0..3f99f1086 100644
+--- a/capsules/core/src/driver.rs
++++ b/capsules/core/src/driver.rs
+@@ -35,6 +35,8 @@ pub enum NUM {
      I2cMasterSlave        = 0x20006,
+     Can                   = 0x20007,
  
 +    UsbCtap               = 0x20009,
 +
      // Radio
      BleAdvertising        = 0x30000,
      Ieee802154            = 0x30001,
-diff --git a/capsules/src/usb/app.rs b/capsules/src/usb/app.rs
+diff --git a/capsules/extra/src/usb/app.rs b/capsules/extra/src/usb/app.rs
 new file mode 100644
 index 000000000..f2e248bc9
 --- /dev/null
-+++ b/capsules/src/usb/app.rs
++++ b/capsules/extra/src/usb/app.rs
 @@ -0,0 +1,61 @@
 +#[derive(Clone, Copy, PartialEq, Eq)]
 +pub enum Side {
@@ -180,24 +181,29 @@ index 000000000..f2e248bc9
 +        self.side == Some(side)
 +    }
 +}
-diff --git a/capsules/src/usb/mod.rs b/capsules/src/usb/mod.rs
-index 767f5de83..cb5e0af97 100644
---- a/capsules/src/usb/mod.rs
-+++ b/capsules/src/usb/mod.rs
-@@ -1,5 +1,8 @@
+diff --git a/capsules/extra/src/usb/mod.rs b/capsules/extra/src/usb/mod.rs
+index 7918292bf..313607470 100644
+--- a/capsules/extra/src/usb/mod.rs
++++ b/capsules/extra/src/usb/mod.rs
+@@ -2,9 +2,12 @@
+ // SPDX-License-Identifier: Apache-2.0 OR MIT
+ // Copyright Tock Contributors 2022.
+ 
 +pub mod app;
  pub mod cdc;
  pub mod descriptors;
-+pub mod usb_ctap;
- pub mod usb_user;
+ pub mod keyboard_hid;
+-pub mod usb_user;
  pub mod usbc_client;
  pub mod usbc_client_ctrl;
 +pub mod usbc_ctap_hid;
-diff --git a/capsules/src/usb/usb_ctap.rs b/capsules/src/usb/usb_ctap.rs
++pub mod usb_ctap;
++pub mod usb_user;
+diff --git a/capsules/extra/src/usb/usb_ctap.rs b/capsules/extra/src/usb/usb_ctap.rs
 new file mode 100644
-index 000000000..30cac1323
+index 000000000..45f1e9167
 --- /dev/null
-+++ b/capsules/src/usb/usb_ctap.rs
++++ b/capsules/extra/src/usb/usb_ctap.rs
 @@ -0,0 +1,343 @@
 +use super::app::{App, Side};
 +use super::usbc_ctap_hid::ClientCtapHID;
@@ -210,7 +216,7 @@ index 000000000..30cac1323
 +use kernel::ProcessId;
 +
 +/// Syscall number
-+use crate::driver;
++use capsules_core::driver;
 +pub const DRIVER_NUM: usize = driver::NUM::UsbCtap as usize;
 +
 +pub const CTAP_CMD_CHECK: usize = 0;
@@ -542,11 +548,11 @@ index 000000000..30cac1323
 +        }
 +    }
 +}
-diff --git a/capsules/src/usb/usbc_ctap_hid.rs b/capsules/src/usb/usbc_ctap_hid.rs
+diff --git a/capsules/extra/src/usb/usbc_ctap_hid.rs b/capsules/extra/src/usb/usbc_ctap_hid.rs
 new file mode 100644
 index 000000000..e074eb7a6
 --- /dev/null
-+++ b/capsules/src/usb/usbc_ctap_hid.rs
++++ b/capsules/extra/src/usb/usbc_ctap_hid.rs
 @@ -0,0 +1,552 @@
 +//! A USB HID client of the USB hardware interface
 +

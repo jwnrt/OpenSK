@@ -1,14 +1,11 @@
 diff --git a/chips/nrf52/src/nvmc.rs b/chips/nrf52/src/nvmc.rs
-index 61e94260e..b7c3be3f6 100644
+index 742bac9c5..877412c9a 100644
 --- a/chips/nrf52/src/nvmc.rs
 +++ b/chips/nrf52/src/nvmc.rs
-@@ -5,7 +5,14 @@
+@@ -9,7 +9,11 @@
  use core::cell::Cell;
  use core::ops::{Index, IndexMut};
- use kernel::deferred_call::DeferredCall;
-+use kernel::dynamic_deferred_call::{
-+    DeferredCallHandle, DynamicDeferredCall, DynamicDeferredCallClient,
-+};
+ use kernel::deferred_call::{DeferredCall, DeferredCallClient};
 +use kernel::grant::{AllowRoCount, AllowRwCount, Grant, UpcallCount};
  use kernel::hil;
 +use kernel::process::ProcessId;
@@ -17,10 +14,11 @@ index 61e94260e..b7c3be3f6 100644
  use kernel::utilities::cells::OptionalCell;
  use kernel::utilities::cells::TakeCell;
  use kernel::utilities::cells::VolatileCell;
-@@ -142,7 +149,13 @@ register_bitfields! [u32,
- static DEFERRED_CALL: DeferredCall<DeferredCallTask> =
-     unsafe { DeferredCall::new(DeferredCallTask::Nvmc) };
+@@ -143,7 +147,14 @@ register_bitfields! [u32,
+     ]
+ ];
  
++
 +type WORD = u32;
 +const WORD_SIZE: usize = core::mem::size_of::<WORD>();
  const PAGE_SIZE: usize = 4096;
@@ -31,7 +29,7 @@ index 61e94260e..b7c3be3f6 100644
  
  /// This is a wrapper around a u8 array that is sized to a single page for the
  /// nrf. Users of this module must pass an object of this type to use the
-@@ -157,13 +170,11 @@ const PAGE_SIZE: usize = 4096;
+@@ -158,13 +169,11 @@ const PAGE_SIZE: usize = 4096;
  ///
  /// let pagebuffer = unsafe { static_init!(NrfPage, NrfPage::default()) };
  /// ```
@@ -47,7 +45,7 @@ index 61e94260e..b7c3be3f6 100644
      }
  }
  impl NrfPage {
-@@ -218,6 +229,10 @@ impl Nvmc {
+@@ -221,6 +230,10 @@ impl Nvmc {
          }
      }
  
@@ -58,7 +56,7 @@ index 61e94260e..b7c3be3f6 100644
      /// Configure the NVMC to allow writes to flash.
      pub fn configure_writeable(&self) {
          self.registers.config.write(Configuration::WEN::Wen);
-@@ -233,6 +248,7 @@ impl Nvmc {
+@@ -236,6 +249,7 @@ impl Nvmc {
          self.registers
              .erasepage
              .write(ErasePage::ERASEPAGE.val(0x10001000));
@@ -66,7 +64,7 @@ index 61e94260e..b7c3be3f6 100644
          while !self.is_ready() {}
      }
  
-@@ -320,7 +336,7 @@ impl Nvmc {
+@@ -323,7 +337,7 @@ impl Nvmc {
          // Put the NVMC in write mode.
          self.registers.config.write(Configuration::WEN::Wen);
  
@@ -75,8 +73,8 @@ index 61e94260e..b7c3be3f6 100644
              let word: u32 = (data[i + 0] as u32) << 0
                  | (data[i + 1] as u32) << 8
                  | (data[i + 2] as u32) << 16
-@@ -388,3 +404,228 @@ impl hil::flash::Flash for Nvmc {
-         self.erase_page(page_number)
+@@ -402,3 +416,223 @@ impl DeferredCallClient for Nvmc {
+         self.deferred_call.register(self);
      }
  }
 +
@@ -123,8 +121,7 @@ index 61e94260e..b7c3be3f6 100644
 +    nvmc: &'static Nvmc,
 +    apps: NvmcDriverGrant,
 +    waiting: OptionalCell<ProcessId>,
-+    deferred_caller: &'static DynamicDeferredCall,
-+    deferred_handle: OptionalCell<DeferredCallHandle>,
++    deferred_call: DeferredCall,
 +    buffer: TakeCell<'static, [u8]>,
 +}
 +
@@ -142,7 +139,6 @@ index 61e94260e..b7c3be3f6 100644
 +    pub fn new(
 +        nvmc: &'static Nvmc,
 +        apps: NvmcDriverGrant,
-+        deferred_caller: &'static DynamicDeferredCall,
 +        buffer: &'static mut [u8],
 +    ) -> SyscallDriver {
 +        nvmc.configure_readonly();
@@ -150,14 +146,9 @@ index 61e94260e..b7c3be3f6 100644
 +            nvmc,
 +            apps,
 +            waiting: OptionalCell::empty(),
-+            deferred_caller,
-+            deferred_handle: OptionalCell::empty(),
++            deferred_call: DeferredCall::new(),
 +            buffer: TakeCell::new(buffer),
 +        }
-+    }
-+
-+    pub fn set_deferred_handle(&self, handle: DeferredCallHandle) {
-+        self.deferred_handle.replace(handle);
 +    }
 +
 +    /// Writes a word-aligned slice at a word-aligned address.
@@ -193,8 +184,7 @@ index 61e94260e..b7c3be3f6 100644
 +        }
 +        while !self.nvmc.is_ready() {}
 +        self.nvmc.configure_readonly();
-+        self.deferred_handle
-+            .map(|handle| self.deferred_caller.set(*handle));
++        self.deferred_call.set();
 +        CommandReturn::success()
 +    }
 +
@@ -211,19 +201,22 @@ index 61e94260e..b7c3be3f6 100644
 +        }
 +        self.nvmc.erase_page_helper(ptr / PAGE_SIZE);
 +        self.nvmc.configure_readonly();
-+        self.deferred_handle
-+            .map(|handle| self.deferred_caller.set(*handle));
++        self.deferred_call.set();
 +        CommandReturn::success()
 +    }
 +}
 +
-+impl DynamicDeferredCallClient for SyscallDriver {
-+    fn call(&self, _handle: DeferredCallHandle) {
++impl DeferredCallClient for SyscallDriver {
++    fn handle_deferred_call(&self) {
 +        self.waiting.take().map(|process_id| {
 +            self.apps.enter(process_id, |_, kernel_data| {
 +                kernel_data.schedule_upcall(0, (0, 0, 0))
 +            })
 +        });
++    }
++
++    fn register(&'static self) {
++        self.deferred_call.register(self);
 +    }
 +}
 +
@@ -305,10 +298,10 @@ index 61e94260e..b7c3be3f6 100644
 +    }
 +}
 diff --git a/kernel/src/kernel.rs b/kernel/src/kernel.rs
-index a1d081ad7..583fbe8d6 100644
+index d5121144b..1cd7971bb 100644
 --- a/kernel/src/kernel.rs
 +++ b/kernel/src/kernel.rs
-@@ -38,6 +38,20 @@ use crate::utilities::cells::NumericCellExt;
+@@ -47,11 +47,28 @@ use tock_tbf::types::TbfParseError;
  /// is less than this threshold.
  pub(crate) const MIN_QUANTA_THRESHOLD_US: u32 = 500;
  
@@ -328,8 +321,6 @@ index a1d081ad7..583fbe8d6 100644
 +
  /// Main object for the kernel. Each board will need to create one.
  pub struct Kernel {
-     /// How many "to-do" items exist at any given time. These include
-@@ -47,6 +61,9 @@ pub struct Kernel {
      /// This holds a pointer to the static array of Process pointers.
      processes: &'static [Option<&'static dyn process::Process>],
  
@@ -339,23 +330,24 @@ index a1d081ad7..583fbe8d6 100644
      /// A counter which keeps track of how many process identifiers have been
      /// created. This is used to create new unique identifiers for processes.
      process_identifier_max: Cell<usize>,
-@@ -110,15 +127,26 @@ fn try_allocate_grant(driver: &dyn SyscallDriver, process: &dyn process::Process
+@@ -125,8 +142,16 @@ unsafe impl capabilities::ProcessApprovalCapability for KernelProcessApprovalCap
  
  impl Kernel {
      pub fn new(processes: &'static [Option<&'static dyn process::Process>]) -> Kernel {
 +        Kernel::new_with_storage(processes, &[])
 +    }
++
 +    pub fn new_with_storage(
 +        processes: &'static [Option<&'static dyn process::Process>],
 +        storage_locations: &'static [StorageLocation],
 +    ) -> Kernel {
          Kernel {
-             work: Cell::new(0),
              processes,
 +            storage_locations,
              process_identifier_max: Cell::new(0),
              grant_counter: Cell::new(0),
              grants_finalized: Cell::new(false),
+@@ -141,6 +166,10 @@ impl Kernel {
          }
      }
  
@@ -363,10 +355,10 @@ index a1d081ad7..583fbe8d6 100644
 +        self.storage_locations
 +    }
 +
-     /// Something was scheduled for a process, so there is more work to do.
-     ///
-     /// This is only exposed in the core kernel crate.
-@@ -1374,3 +1402,14 @@ impl Kernel {
+     /// Helper function that moves all non-generic portions of process_map_or
+     /// into a non-generic function to reduce code bloat from monomorphization.
+     pub(crate) fn get_process(&self, processid: ProcessId) -> Option<&dyn process::Process> {
+@@ -1676,3 +1705,14 @@ impl process_checker::Client<'static> for ProcessCheckerMachine {
          }
      }
  }
@@ -382,10 +374,10 @@ index a1d081ad7..583fbe8d6 100644
 +    }
 +}
 diff --git a/kernel/src/lib.rs b/kernel/src/lib.rs
-index 028f30220..8880bc000 100644
+index 7440f1613..83f13c6e2 100644
 --- a/kernel/src/lib.rs
 +++ b/kernel/src/lib.rs
-@@ -125,5 +125,6 @@ mod syscall_driver;
+@@ -129,5 +129,6 @@ mod syscall_driver;
  // Core resources exposed as `kernel::Type`.
  pub use crate::errorcode::ErrorCode;
  pub use crate::kernel::Kernel;
@@ -393,10 +385,10 @@ index 028f30220..8880bc000 100644
  pub use crate::process::ProcessId;
  pub use crate::scheduler::Scheduler;
 diff --git a/kernel/src/memop.rs b/kernel/src/memop.rs
-index 51d89f37c..45ab3856b 100644
+index 35d4cf917..380ff9041 100644
 --- a/kernel/src/memop.rs
 +++ b/kernel/src/memop.rs
-@@ -107,6 +107,37 @@ pub(crate) fn memop(process: &dyn Process, op_type: usize, r1: usize) -> Syscall
+@@ -109,6 +109,37 @@ pub(crate) fn memop(process: &dyn Process, op_type: usize, r1: usize) -> Syscall
              SyscallReturn::Success
          }
  
@@ -435,10 +427,10 @@ index 51d89f37c..45ab3856b 100644
      }
  }
 diff --git a/kernel/src/process.rs b/kernel/src/process.rs
-index c1794d9bf..4fbad3f0b 100644
+index c5c046d22..fee390eb9 100644
 --- a/kernel/src/process.rs
 +++ b/kernel/src/process.rs
-@@ -9,7 +9,7 @@ use core::str;
+@@ -12,7 +12,7 @@ use core::str;
  use crate::capabilities;
  use crate::errorcode::ErrorCode;
  use crate::ipc;
@@ -447,7 +439,7 @@ index c1794d9bf..4fbad3f0b 100644
  use crate::platform::mpu::{self};
  use crate::processbuffer::{ReadOnlyProcessBuffer, ReadWriteProcessBuffer};
  use crate::storage_permissions;
-@@ -335,6 +335,15 @@ pub trait Process {
+@@ -454,6 +454,15 @@ pub trait Process {
      /// writeable flash region.
      fn get_writeable_flash_region(&self, region_index: usize) -> (u32, u32);
  
@@ -464,10 +456,10 @@ index c1794d9bf..4fbad3f0b 100644
      /// process. Processes are not required to call this through the memop
      /// system call, but it aids in debugging the process.
 diff --git a/kernel/src/process_standard.rs b/kernel/src/process_standard.rs
-index fa76e2c68..dd03e8f29 100644
+index 114ab46ca..3eb2d5e5e 100644
 --- a/kernel/src/process_standard.rs
 +++ b/kernel/src/process_standard.rs
-@@ -14,7 +14,7 @@ use crate::collections::ring_buffer::RingBuffer;
+@@ -19,7 +19,7 @@ use crate::collections::ring_buffer::RingBuffer;
  use crate::config;
  use crate::debug;
  use crate::errorcode::ErrorCode;
@@ -476,8 +468,8 @@ index fa76e2c68..dd03e8f29 100644
  use crate::platform::chip::Chip;
  use crate::platform::mpu::{self, MPU};
  use crate::process::{Error, FunctionCall, FunctionCallSource, Process, State, Task};
-@@ -258,6 +258,35 @@ impl<C: Chip> Process for ProcessStandard<'_, C> {
-         ret
+@@ -340,6 +340,35 @@ impl<C: Chip> Process for ProcessStandard<'_, C> {
+         }))
      }
  
 +    fn number_storage_locations(&self) -> usize {
@@ -512,8 +504,8 @@ index fa76e2c68..dd03e8f29 100644
      fn ready(&self) -> bool {
          self.tasks.map_or(false, |ring_buf| ring_buf.has_elements())
              || self.state.get() == State::Running
-@@ -1366,6 +1395,33 @@ impl<C: 'static + Chip> ProcessStandard<'_, C> {
-             return Err(ProcessLoadError::MpuInvalidFlashLength);
+@@ -1488,6 +1517,33 @@ impl<C: 'static + Chip> ProcessStandard<'_, C> {
+             return Err((ProcessLoadError::MpuInvalidFlashLength, remaining_memory));
          }
  
 +        // Allocate MPU region for the storage locations. The storage locations are currently

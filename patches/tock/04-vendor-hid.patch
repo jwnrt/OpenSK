@@ -1,19 +1,19 @@
-diff --git a/capsules/Cargo.toml b/capsules/Cargo.toml
-index 65301bcf1..dc70e98b1 100644
---- a/capsules/Cargo.toml
-+++ b/capsules/Cargo.toml
-@@ -8,3 +8,6 @@ edition = "2021"
- kernel = { path = "../kernel" }
- enum_primitive = { path = "../libraries/enum_primitive" }
- tickv = { path = "../libraries/tickv" }
+diff --git a/capsules/extra/Cargo.toml b/capsules/extra/Cargo.toml
+index 757a8e073..05237d479 100644
+--- a/capsules/extra/Cargo.toml
++++ b/capsules/extra/Cargo.toml
+@@ -13,3 +13,6 @@ kernel = { path = "../../kernel" }
+ enum_primitive = { path = "../../libraries/enum_primitive" }
+ tickv = { path = "../../libraries/tickv" }
+ capsules-core = { path = "../core" }
 +
 +[features]
 +vendor_hid = []
-diff --git a/capsules/src/usb/descriptors.rs b/capsules/src/usb/descriptors.rs
-index 67f708239..c2556d3a2 100644
---- a/capsules/src/usb/descriptors.rs
-+++ b/capsules/src/usb/descriptors.rs
-@@ -415,13 +415,14 @@ impl DescriptorBuffer {
+diff --git a/capsules/extra/src/usb/descriptors.rs b/capsules/extra/src/usb/descriptors.rs
+index 6b1fdbec8..bae6b8758 100644
+--- a/capsules/extra/src/usb/descriptors.rs
++++ b/capsules/extra/src/usb/descriptors.rs
+@@ -419,13 +419,14 @@ impl DescriptorBuffer {
  /// example, if the interface descriptor list contains `[ID1, ID2, ID3]`,
  /// and the endpoint descriptors list is `[[ED1, ED2], [ED3, ED4, ED5],
  /// [ED6]]`, then the third interface descriptor (`ID3`) has one
@@ -30,7 +30,7 @@ index 67f708239..c2556d3a2 100644
      cdc_descriptor: Option<&[CdcInterfaceDescriptor]>,
  ) -> (DeviceBuffer, DescriptorBuffer) {
      // Create device descriptor buffer and fill.
-@@ -505,7 +506,7 @@ pub fn create_descriptor_buffers(
+@@ -509,7 +510,7 @@ pub fn create_descriptor_buffers(
                  .iter()
                  .map(|descs| descs.iter().map(|d| d.size()).sum::<usize>())
                  .sum::<usize>()
@@ -39,7 +39,7 @@ index 67f708239..c2556d3a2 100644
              + cdc_descriptor.map_or(0, |ds| ds.iter().map(|d| d.size()).sum::<usize>());
  
      // Set the number of endpoints for each interface descriptor.
-@@ -522,12 +523,10 @@ pub fn create_descriptor_buffers(
+@@ -526,12 +527,10 @@ pub fn create_descriptor_buffers(
          // Add the interface descriptor.
          len += d.write_to(&other_buf.buf[len..]);
  
@@ -56,11 +56,35 @@ index 67f708239..c2556d3a2 100644
              }
          }
  
-diff --git a/capsules/src/usb/usbc_client_ctrl.rs b/capsules/src/usb/usbc_client_ctrl.rs
-index c8e55a8a8..54c7c3bbb 100644
---- a/capsules/src/usb/usbc_client_ctrl.rs
-+++ b/capsules/src/usb/usbc_client_ctrl.rs
-@@ -40,6 +40,12 @@ const DESCRIPTOR_BUFLEN: usize = 128;
+diff --git a/capsules/extra/src/usb/keyboard_hid.rs b/capsules/extra/src/usb/keyboard_hid.rs
+index b0e8edead..9cdf21765 100644
+--- a/capsules/extra/src/usb/keyboard_hid.rs
++++ b/capsules/extra/src/usb/keyboard_hid.rs
+@@ -149,7 +149,7 @@ impl<'a, U: hil::usb::UsbController<'a>> KeyboardHid<'a, U> {
+                 },
+                 interfaces,
+                 endpoints,
+-                Some(&HID_DESCRIPTOR),
++                Some(&[&HID_DESCRIPTOR]),
+                 None,
+             );
+ 
+@@ -158,8 +158,8 @@ impl<'a, U: hil::usb::UsbController<'a>> KeyboardHid<'a, U> {
+                 controller,
+                 device_descriptor_buffer,
+                 other_descriptor_buffer,
+-                Some(&HID_DESCRIPTOR),
+-                Some(&REPORT),
++                Some([&HID_DESCRIPTOR]),
++                Some([&REPORT]),
+                 LANGUAGES,
+                 strings,
+             ),
+diff --git a/capsules/extra/src/usb/usbc_client_ctrl.rs b/capsules/extra/src/usb/usbc_client_ctrl.rs
+index 182ddc530..7595150d5 100644
+--- a/capsules/extra/src/usb/usbc_client_ctrl.rs
++++ b/capsules/extra/src/usb/usbc_client_ctrl.rs
+@@ -44,6 +44,12 @@ const DESCRIPTOR_BUFLEN: usize = 128;
  
  const N_ENDPOINTS: usize = 3;
  
@@ -73,7 +97,7 @@ index c8e55a8a8..54c7c3bbb 100644
  /// Handler for USB control endpoint requests.
  pub struct ClientCtrl<'a, 'b, U: 'a> {
      /// The USB hardware controller.
-@@ -66,12 +72,12 @@ pub struct ClientCtrl<'a, 'b, U: 'a> {
+@@ -70,12 +76,12 @@ pub struct ClientCtrl<'a, 'b, U: 'a> {
  
      /// An optional HID descriptor for the configuration. This can be requested
      /// separately. It must also be included in `other_descriptor_buffer` if it exists.
@@ -88,7 +112,7 @@ index c8e55a8a8..54c7c3bbb 100644
  
      /// Supported language (only one for now).
      language: &'b [u16; 1],
-@@ -106,8 +112,8 @@ impl<'a, 'b, U: hil::usb::UsbController<'a>> ClientCtrl<'a, 'b, U> {
+@@ -110,8 +116,8 @@ impl<'a, 'b, U: hil::usb::UsbController<'a>> ClientCtrl<'a, 'b, U> {
          controller: &'a U,
          device_descriptor_buffer: DeviceBuffer,
          other_descriptor_buffer: DescriptorBuffer,
@@ -99,7 +123,7 @@ index c8e55a8a8..54c7c3bbb 100644
          language: &'b [u16; 1],
          strings: &'b [&'b str],
      ) -> Self {
-@@ -333,28 +339,39 @@ impl<'a, 'b, U: hil::usb::UsbController<'a>> ClientCtrl<'a, 'b, U> {
+@@ -337,28 +343,39 @@ impl<'a, 'b, U: hil::usb::UsbController<'a>> ClientCtrl<'a, 'b, U> {
                  descriptor_type,
                  // TODO: use the descriptor index
                  descriptor_index: _,

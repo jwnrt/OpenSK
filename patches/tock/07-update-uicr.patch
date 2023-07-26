@@ -1,9 +1,9 @@
 diff --git a/boards/nordic/nrf52_components/src/startup.rs b/boards/nordic/nrf52_components/src/startup.rs
-index e6cf3ff56..7b3ea5a59 100644
+index 2876602ce..5fff67218 100644
 --- a/boards/nordic/nrf52_components/src/startup.rs
 +++ b/boards/nordic/nrf52_components/src/startup.rs
-@@ -53,6 +53,9 @@ impl<'a> Component for NrfStartupComponent<'a> {
-             erase_uicr |= !uicr.is_nfc_pins_protection_enabled();
+@@ -72,6 +72,9 @@ impl<'a> Component for NrfStartupComponent<'a> {
+             erase_uicr = true;
          }
  
 +        // Avoid killing the DFU bootloader if present
@@ -12,7 +12,7 @@ index e6cf3ff56..7b3ea5a59 100644
          if erase_uicr {
              self.nvmc.erase_uicr();
          }
-@@ -62,6 +65,11 @@ impl<'a> Component for NrfStartupComponent<'a> {
+@@ -81,6 +84,11 @@ impl<'a> Component for NrfStartupComponent<'a> {
  
          let mut needs_soft_reset: bool = false;
  
@@ -25,15 +25,18 @@ index e6cf3ff56..7b3ea5a59 100644
          if uicr
              .get_psel0_reset_pin()
 diff --git a/chips/nrf52/src/uicr.rs b/chips/nrf52/src/uicr.rs
-index 3b51717d0..3086394aa 100644
+index 121c4f20f..57d5cb342 100644
 --- a/chips/nrf52/src/uicr.rs
 +++ b/chips/nrf52/src/uicr.rs
-@@ -1,39 +1,43 @@
+@@ -3,42 +3,46 @@
+ // Copyright Tock Contributors 2022.
+ 
  //! User information configuration registers
 -//!
 -//! Minimal implementation to support activation of the reset button on
 -//! nRF52-DK.
  
+ use crate::ficr;
  use enum_primitive::cast::FromPrimitive;
  use kernel::utilities::registers::interfaces::{ReadWriteable, Readable, Writeable};
 -use kernel::utilities::registers::{register_bitfields, ReadWrite};
@@ -99,7 +102,7 @@ index 3b51717d0..3086394aa 100644
  }
  
  register_bitfields! [u32,
-@@ -59,6 +63,23 @@ register_bitfields! [u32,
+@@ -66,6 +70,23 @@ register_bitfields! [u32,
              DISABLED = 0xff
          ]
      ],
@@ -123,7 +126,7 @@ index 3b51717d0..3086394aa 100644
      /// Setting of pins dedicated to NFC functionality: NFC antenna or GPIO
      NfcPins [
          /// Setting pins dedicated to NFC functionality
-@@ -169,6 +190,18 @@ impl Uicr {
+@@ -176,6 +197,18 @@ impl Uicr {
          }
      }
  
