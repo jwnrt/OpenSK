@@ -58,6 +58,7 @@ You will need one the following supported boards:
     to have a more practical form factor.
 *   [Makerdiary nRF52840-MDK USB dongle](https://wiki.makerdiary.com/nrf52840-mdk/).
 *   [Feitian OpenSK dongle](https://feitiantech.github.io/OpenSK_USB/).
+*   [OpenTitan Earl Grey on the CW310](https://opentitan.org/book/doc/contributing/fpga/get_a_board.html)
 
 ## Installation
 
@@ -68,6 +69,7 @@ To install OpenSK,
 	* [Nordic nRF52840 Dongle](docs/boards/nrf52840_dongle.md)
 	* [Makerdiary nRF52840-MDK USB dongle](docs/boards/nrf52840_mdk.md)
 	* [Feitian OpenSK dongle](docs/boards/nrf52840_feitian.md)
+  * [OpenTitan Earl Grey on the CW310](docs/boards/earlgrey_cw310.md)
 
 To test whether the installation was successful, visit a
 [demo website](https://webauthn.io/) and try to register and login.
