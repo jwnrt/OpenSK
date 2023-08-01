@@ -7,7 +7,7 @@ MEMORY {
    * for TockOs!
    */
   FLASH (X) : ORIGIN = 0x20030000, LENGTH = 0xB0000
-  RAM   (W) : ORIGIN = 0x10004E94, LENGTH = 128K
+  RAM   (W) : ORIGIN = 0x10005294, LENGTH = 128K
 }
 
 /*

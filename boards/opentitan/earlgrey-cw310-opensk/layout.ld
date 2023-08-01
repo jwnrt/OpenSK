@@ -14,7 +14,7 @@ MEMORY
    * See https://github.com/lowRISC/opentitan/blob/master/sw/device/silicon_creator/lib/base/static_critical.ld
    * for details
    */
-  ram   (!rx) : ORIGIN = 0x10000650, LENGTH = 0x10000 - 0x650
+  ram   (!rx) : ORIGIN = 0x10000650, LENGTH = 0x20000 - 0x650
 }
 
 SECTIONS {
@@ -31,6 +31,8 @@ SECTIONS {
       . += 384; /* modulus */
       . += 4;   /* address_translation */
       . += 4;   /* identifier */
+      . += 4;   /* manifest_version */
+      . += 4;   /* signed_region_end */
       . += 4;   /* length */
       . += 4;   /* version_major */
       . += 4;   /* version_minor */
@@ -41,9 +43,14 @@ SECTIONS {
       . += 4;   /* code_start */
       . += 4;   /* code_end */
       LONG(_stext - ORIGIN(rom)); /* . = . + 4; entry_point */
-      . += 128; /* padding */
+      . += 120; /* padding */
       /* size = 1024 bytes */
     } > rom
+
+	.vectors : ALIGN (256) {
+		KEEP(*(.riscv.open_titan_trap_vectored));
+	} > rom
 }
+
 ASSERT (((_etext - _manifest) > 0), "Error: PMP and Flash protection setup assumes _etext follows _manifest");
 INCLUDE ../../kernel_layout.ld
