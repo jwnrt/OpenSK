@@ -13,6 +13,9 @@
 // limitations under the License.
 
 /// Number of keys that persist the CTAP reset command.
+///
+/// Note that persistent is overloaded: Here, we mean values that survive a Reset. Outside, of this
+/// file, we mean values that survive reboot.
 pub const NUM_PERSISTENT_KEYS: usize = 20;
 
 /// Defines a key given its name and value or range of values.
@@ -61,8 +64,14 @@ make_partition! {
 
     // WARNING: Keys should not be deleted but prefixed with `_` to avoid accidentally reusing them.
 
-    /// Reserved for the attestation store implementation of the environment.
-    _RESERVED_ATTESTATION_STORE = 1..3;
+    /// Private key used during attestation.
+    ATTESTATION_PRIVATE_KEY = 1;
+
+    /// Certificate used during attestation.
+    ATTESTATION_CERTIFICATE = 2;
+
+    /// Type of attestation used.
+    ATTESTATION_ID = 4;
 
     /// Used for the AAGUID before, but deprecated.
     _AAGUID = 3;
@@ -72,6 +81,9 @@ make_partition! {
     //   NUM_PERSISTENT_KEYS.
     // - When adding a (non-persistent) key below this message, make sure its value is bigger or
     //   equal than NUM_PERSISTENT_KEYS.
+
+    /// Used to make sure that a Reset command completes once started.
+    RESET_COMPLETION = 20;
 
     /// Reserved for future credential-related objects.
     ///
@@ -124,7 +136,7 @@ make_partition! {
     PIN_PROPERTIES = 2045;
 
     /// Reserved for the key store implementation of the environment.
-    _RESERVED_KEY_STORE = 2046;
+    KEY_STORE = 2046;
 
     /// The global signature counter.
     ///

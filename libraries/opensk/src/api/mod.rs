@@ -17,13 +17,13 @@
 //! The [environment](crate::env::Env) is split into components. Each component has an API described
 //! by a trait. This module gathers the API of those components.
 
-pub mod attestation_store;
 pub mod clock;
 pub mod connection;
 pub mod crypto;
 pub mod customization;
 pub mod firmware_protection;
 pub mod key_store;
+pub mod persist;
 pub mod private_key;
 pub mod rng;
 pub mod user_presence;

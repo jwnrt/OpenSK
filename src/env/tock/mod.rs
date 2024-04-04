@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use clock::TockClock;
 use core::cell::Cell;
@@ -28,15 +29,16 @@ use libtock_drivers::{rng, timer, usb_ctap_hid};
 use libtock_leds::Leds;
 use libtock_platform as platform;
 use libtock_platform::{ErrorCode, Syscalls};
-use opensk::api::attestation_store::AttestationStore;
 use opensk::api::connection::{
     HidConnection, SendOrRecvError, SendOrRecvResult, SendOrRecvStatus, UsbEndpoint,
 };
 use opensk::api::crypto::software_crypto::SoftwareCrypto;
 use opensk::api::customization::{CustomizationImpl, AAGUID_LENGTH, DEFAULT_CUSTOMIZATION};
+use opensk::api::key_store;
+use opensk::api::persist::{Persist, PersistIter};
 use opensk::api::rng::Rng;
 use opensk::api::user_presence::{UserPresence, UserPresenceError, UserPresenceResult};
-use opensk::api::{attestation_store, key_store};
+use opensk::ctap::status_code::CtapResult;
 use opensk::ctap::Channel;
 use opensk::env::Env;
 #[cfg(feature = "std")]
@@ -260,6 +262,31 @@ pub fn take_storage<S: Syscalls, C: platform::subscribe::Config + platform::allo
     Storage::new()
 }
 
+impl<S, C> Persist for TockEnv<S, C>
+where
+    S: Syscalls,
+    C: platform::subscribe::Config + platform::allow_ro::Config,
+{
+    fn find(&self, key: usize) -> CtapResult<Option<Vec<u8>>> {
+        Ok(self.store.find(key)?)
+    }
+
+    fn insert(&mut self, key: usize, value: &[u8]) -> CtapResult<()> {
+        Ok(self.store.insert(key, value)?)
+    }
+
+    fn remove(&mut self, key: usize) -> CtapResult<()> {
+        Ok(self.store.remove(key)?)
+    }
+
+    fn iter(&self) -> CtapResult<PersistIter<'_>> {
+        Ok(Box::new(self.store.iter()?.map(|handle| match handle {
+            Ok(handle) => Ok(handle.get_key()),
+            Err(error) => Err(error.into()),
+        })))
+    }
+}
+
 impl<S, C> UserPresence for TockEnv<S, C>
 where
     S: Syscalls,
@@ -366,41 +393,13 @@ where
 {
 }
 
-impl<S, C> AttestationStore for TockEnv<S, C>
-where
-    S: Syscalls,
-    C: platform::subscribe::Config + platform::allow_ro::Config,
-{
-    fn get(
-        &mut self,
-        id: &attestation_store::Id,
-    ) -> Result<Option<attestation_store::Attestation>, attestation_store::Error> {
-        if !matches!(id, attestation_store::Id::Batch) {
-            return Err(attestation_store::Error::NoSupport);
-        }
-        attestation_store::helper_get(self)
-    }
-
-    fn set(
-        &mut self,
-        id: &attestation_store::Id,
-        attestation: Option<&attestation_store::Attestation>,
-    ) -> Result<(), attestation_store::Error> {
-        if !matches!(id, attestation_store::Id::Batch) {
-            return Err(attestation_store::Error::NoSupport);
-        }
-        attestation_store::helper_set(self, attestation)
-    }
-}
-
 impl<S: Syscalls, C: platform::subscribe::Config + platform::allow_ro::Config> Env
     for TockEnv<S, C>
 {
     type Rng = TockRng<S>;
     type UserPresence = Self;
-    type Storage = Storage<S, C>;
+    type Persist = Self;
     type KeyStore = Self;
-    type AttestationStore = Self;
     type Clock = TockClock<S>;
     type Write = ConsoleWriter<S>;
     type Customization = CustomizationImpl;
@@ -415,15 +414,11 @@ impl<S: Syscalls, C: platform::subscribe::Config + platform::allow_ro::Config> E
         self
     }
 
-    fn store(&mut self) -> &mut Store<Self::Storage> {
-        &mut self.store
-    }
-
-    fn key_store(&mut self) -> &mut Self {
+    fn persist(&mut self) -> &mut Self {
         self
     }
 
-    fn attestation_store(&mut self) -> &mut Self {
+    fn key_store(&mut self) -> &mut Self {
         self
     }
 

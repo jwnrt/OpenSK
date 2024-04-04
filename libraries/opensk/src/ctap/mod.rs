@@ -36,6 +36,7 @@ mod u2f_up;
 #[cfg(feature = "vendor_hid")]
 pub mod vendor_hid;
 
+pub use self::client_pin::PIN_AUTH_LENGTH;
 use self::client_pin::{ClientPin, PinPermission};
 use self::command::{
     AuthenticatorGetAssertionParameters, AuthenticatorMakeCredentialParameters, Command,
@@ -59,7 +60,6 @@ use self::secret::Secret;
 use self::status_code::Ctap2StatusCode;
 #[cfg(feature = "with_ctap1")]
 use self::u2f_up::U2fUserPresenceState;
-use crate::api::attestation_store::{self, Attestation, AttestationStore};
 use crate::api::clock::Clock;
 use crate::api::connection::{HidConnection, SendOrRecvStatus, UsbEndpoint};
 use crate::api::crypto::ecdsa::{SecretKey as _, Signature};
@@ -68,6 +68,7 @@ use crate::api::crypto::sha256::Sha256;
 use crate::api::crypto::HASH_SIZE;
 use crate::api::customization::Customization;
 use crate::api::key_store::{CredentialSource, KeyStore, MAX_CREDENTIAL_ID_SIZE};
+use crate::api::persist::{Attestation, AttestationId, Persist};
 use crate::api::private_key::PrivateKey;
 use crate::api::rng::Rng;
 use crate::api::user_presence::{UserPresence, UserPresenceError};
@@ -82,7 +83,6 @@ use rand_core::RngCore;
 use sk_cbor as cbor;
 use sk_cbor::cbor_map_options;
 
-pub const INITIAL_SIGNATURE_COUNTER: u32 = 1;
 // Set this bit when checking user presence.
 const UP_FLAG: u8 = 0x01;
 // Set this bit when checking user verification.
@@ -183,6 +183,13 @@ pub fn cbor_read(encoded_cbor: &[u8]) -> Result<cbor::Value, Ctap2StatusCode> {
 pub fn cbor_write(value: cbor::Value, encoded_cbor: &mut Vec<u8>) -> Result<(), Ctap2StatusCode> {
     cbor::writer::write_nested(value, encoded_cbor, Some(MAX_CBOR_NESTING_DEPTH))
         .map_err(|_e| Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR)
+}
+
+/// Resets the all state for a CTAP Reset command.
+pub fn reset(env: &mut impl Env) -> Result<(), Ctap2StatusCode> {
+    env.persist().reset()?;
+    env.key_store().reset()?;
+    storage::init(env)
 }
 
 /// Filters the credential from the option if credProtect criteria are not met.
@@ -578,7 +585,7 @@ impl<E: Env> CtapState<E> {
     ) -> Result<(), Ctap2StatusCode> {
         if env.customization().use_signature_counter() {
             let increment = env.rng().next_u32() % 8 + 1;
-            storage::incr_global_signature_counter(env, increment)?;
+            env.persist().incr_global_signature_counter(increment)?;
         }
         Ok(())
     }
@@ -737,7 +744,7 @@ impl<E: Env> CtapState<E> {
             // This case was added in FIDO 2.1.
             if auth_param.is_empty() {
                 check_user_presence(env, channel)?;
-                if storage::pin_hash(env)?.is_none() {
+                if env.persist().pin_hash()?.is_none() {
                     return Err(Ctap2StatusCode::CTAP2_ERR_PIN_NOT_SET);
                 } else {
                     return Err(Ctap2StatusCode::CTAP2_ERR_PIN_INVALID);
@@ -804,7 +811,7 @@ impl<E: Env> CtapState<E> {
         let mut flags = match pin_uv_auth_param {
             Some(pin_uv_auth_param) => {
                 // This case is not mentioned in CTAP2.1, so we keep 2.0 logic.
-                if storage::pin_hash(env)?.is_none() {
+                if env.persist().pin_hash()?.is_none() {
                     return Err(Ctap2StatusCode::CTAP2_ERR_PIN_NOT_SET);
                 }
                 self.client_pin.verify_pin_uv_auth_token(
@@ -829,7 +836,7 @@ impl<E: Env> CtapState<E> {
                     return Err(Ctap2StatusCode::CTAP2_ERR_PUAT_REQUIRED);
                 }
                 // Corresponds to makeCredUvNotRqd set to true.
-                if options.rk && storage::pin_hash(env)?.is_some() {
+                if options.rk && env.persist().pin_hash()?.is_some() {
                     return Err(Ctap2StatusCode::CTAP2_ERR_PUAT_REQUIRED);
                 }
                 0x00
@@ -970,9 +977,9 @@ impl<E: Env> CtapState<E> {
         signature_data.extend(client_data_hash);
 
         let attestation_id = if ep_att {
-            Some(attestation_store::Id::Enterprise)
+            Some(AttestationId::Enterprise)
         } else if env.customization().use_batch_attestation() {
-            Some(attestation_store::Id::Batch)
+            Some(AttestationId::Batch)
         } else {
             None
         };
@@ -982,8 +989,8 @@ impl<E: Env> CtapState<E> {
                     private_key,
                     certificate,
                 } = env
-                    .attestation_store()
-                    .get(&id)?
+                    .persist()
+                    .get_attestation(id)?
                     .ok_or(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR)?;
                 let attestation_key = EcdsaSk::<E>::from_slice(&private_key).unwrap();
                 (
@@ -1174,7 +1181,7 @@ impl<E: Env> CtapState<E> {
         let mut flags = match pin_uv_auth_param {
             Some(pin_uv_auth_param) => {
                 // This case is not mentioned in CTAP2.1, so we keep 2.0 logic.
-                if storage::pin_hash(env)?.is_none() {
+                if env.persist().pin_hash()?.is_none() {
                     return Err(Ctap2StatusCode::CTAP2_ERR_PIN_NOT_SET);
                 }
                 self.client_pin.verify_pin_uv_auth_token(
@@ -1311,7 +1318,10 @@ impl<E: Env> CtapState<E> {
             (String::from("credMgmt"), true),
             #[cfg(feature = "config_command")]
             (String::from("authnrCfg"), true),
-            (String::from("clientPin"), storage::pin_hash(env)?.is_some()),
+            (
+                String::from("clientPin"),
+                env.persist().pin_hash()?.is_some(),
+            ),
             (String::from("largeBlobs"), true),
             (String::from("pinUvAuthToken"), true),
             #[cfg(feature = "config_command")]
@@ -1351,7 +1361,7 @@ impl<E: Env> CtapState<E> {
                 max_serialized_large_blob_array: Some(
                     env.customization().max_large_blob_array_size() as u64,
                 ),
-                force_pin_change: Some(storage::has_force_pin_change(env)?),
+                force_pin_change: Some(env.persist().has_force_pin_change()?),
                 min_pin_length: storage::min_pin_length(env)?,
                 firmware_version: env.firmware_version(),
                 max_cred_blob_length: Some(env.customization().max_cred_blob_length() as u64),
@@ -1379,7 +1389,7 @@ impl<E: Env> CtapState<E> {
         }
         check_user_presence(env, channel)?;
 
-        storage::reset(env)?;
+        reset(env)?;
         self.client_pin.reset(env);
         #[cfg(feature = "with_ctap1")]
         {
@@ -1413,7 +1423,7 @@ impl<E: Env> CtapState<E> {
         let mut signature_counter = [0u8; 4];
         BigEndian::write_u32(
             &mut signature_counter,
-            storage::global_signature_counter(env)?,
+            env.persist().global_signature_counter()?,
         );
         auth_data.extend(&signature_counter);
         Ok(auth_data)
@@ -1467,6 +1477,7 @@ mod test {
         expected_credential_id_size: u8,
         expected_extension_cbor: &[u8],
     ) {
+        const INITIAL_SIGNATURE_COUNTER: u32 = 1;
         match make_credential_response.as_ref().unwrap() {
             ResponseData::AuthenticatorMakeCredential(make_credential_response) => {
                 let AuthenticatorMakeCredentialResponse {
@@ -2042,7 +2053,7 @@ mod test {
 
         let mut ctap_state = CtapState::<TestEnv>::new(&mut env);
         ctap_state.client_pin = client_pin;
-        storage::set_pin(&mut env, &[0x88; 16], 4).unwrap();
+        env.persist().set_pin(&[0x88; 16], 4).unwrap();
 
         let client_data_hash = [0xCD];
         let pin_uv_auth_param = authenticate_pin_uv_auth_token(
@@ -2090,7 +2101,7 @@ mod test {
     fn test_non_resident_process_make_credential_with_pin() {
         let mut env = TestEnv::default();
         let mut ctap_state = CtapState::<TestEnv>::new(&mut env);
-        storage::set_pin(&mut env, &[0x88; 16], 4).unwrap();
+        env.persist().set_pin(&[0x88; 16], 4).unwrap();
 
         let mut make_credential_params = create_minimal_make_credential_parameters();
         make_credential_params.options.rk = false;
@@ -2110,7 +2121,7 @@ mod test {
     fn test_resident_process_make_credential_with_pin() {
         let mut env = TestEnv::default();
         let mut ctap_state = CtapState::<TestEnv>::new(&mut env);
-        storage::set_pin(&mut env, &[0x88; 16], 4).unwrap();
+        env.persist().set_pin(&[0x88; 16], 4).unwrap();
 
         let make_credential_params = create_minimal_make_credential_parameters();
         let make_credential_response =
@@ -2135,7 +2146,7 @@ mod test {
             Err(Ctap2StatusCode::CTAP2_ERR_PUAT_REQUIRED)
         );
 
-        storage::set_pin(&mut env, &[0x88; 16], 4).unwrap();
+        env.persist().set_pin(&[0x88; 16], 4).unwrap();
         let mut make_credential_params = create_minimal_make_credential_parameters();
         make_credential_params.pin_uv_auth_param = Some(vec![0xA4; 16]);
         make_credential_params.pin_uv_auth_protocol = Some(PinUvAuthProtocol::V1);
@@ -2388,7 +2399,7 @@ mod test {
         };
         let get_assertion_response =
             ctap_state.process_get_assertion(&mut env, get_assertion_params, DUMMY_CHANNEL);
-        let signature_counter = storage::global_signature_counter(&mut env).unwrap();
+        let signature_counter = env.persist().global_signature_counter().unwrap();
         check_assertion_response(get_assertion_response, vec![0x1D], signature_counter, None);
     }
 
@@ -2613,7 +2624,7 @@ mod test {
         };
         let get_assertion_response =
             ctap_state.process_get_assertion(&mut env, get_assertion_params, DUMMY_CHANNEL);
-        let signature_counter = storage::global_signature_counter(&mut env).unwrap();
+        let signature_counter = env.persist().global_signature_counter().unwrap();
         check_assertion_response(get_assertion_response, vec![0x1D], signature_counter, None);
 
         let credential = PublicKeyCredentialSource {
@@ -2766,7 +2777,7 @@ mod test {
         };
         let get_assertion_response =
             ctap_state.process_get_assertion(&mut env, get_assertion_params, DUMMY_CHANNEL);
-        let signature_counter = storage::global_signature_counter(&mut env).unwrap();
+        let signature_counter = env.persist().global_signature_counter().unwrap();
         let expected_extension_cbor = [
             0xA1, 0x68, 0x63, 0x72, 0x65, 0x64, 0x42, 0x6C, 0x6F, 0x62, 0x41, 0xCB,
         ];
@@ -2831,7 +2842,7 @@ mod test {
         };
         let get_assertion_response =
             ctap_state.process_get_assertion(&mut env, get_assertion_params, DUMMY_CHANNEL);
-        let signature_counter = storage::global_signature_counter(&mut env).unwrap();
+        let signature_counter = env.persist().global_signature_counter().unwrap();
         let expected_extension_cbor = [
             0xA1, 0x68, 0x63, 0x72, 0x65, 0x64, 0x42, 0x6C, 0x6F, 0x62, 0x41, 0xCB,
         ];
@@ -2934,7 +2945,7 @@ mod test {
 
         ctap_state.client_pin = client_pin;
         // The PIN length is outside of the test scope and most likely incorrect.
-        storage::set_pin(&mut env, &[0u8; 16], 4).unwrap();
+        env.persist().set_pin(&[0u8; 16], 4).unwrap();
         let client_data_hash = vec![0xCD];
         let pin_uv_auth_param = authenticate_pin_uv_auth_token(
             &pin_uv_auth_token,
@@ -2956,7 +2967,7 @@ mod test {
         };
         let get_assertion_response =
             ctap_state.process_get_assertion(&mut env, get_assertion_params, DUMMY_CHANNEL);
-        let signature_counter = storage::global_signature_counter(&mut env).unwrap();
+        let signature_counter = env.persist().global_signature_counter().unwrap();
         check_assertion_response_with_user(
             get_assertion_response,
             Some(user2),
@@ -3037,7 +3048,7 @@ mod test {
         };
         let get_assertion_response =
             ctap_state.process_get_assertion(&mut env, get_assertion_params, DUMMY_CHANNEL);
-        let signature_counter = storage::global_signature_counter(&mut env).unwrap();
+        let signature_counter = env.persist().global_signature_counter().unwrap();
         check_assertion_response(
             get_assertion_response,
             vec![0x03],
@@ -3202,13 +3213,13 @@ mod test {
         let mut env = TestEnv::default();
         let mut ctap_state = CtapState::<TestEnv>::new(&mut env);
 
-        let mut last_counter = storage::global_signature_counter(&mut env).unwrap();
+        let mut last_counter = env.persist().global_signature_counter().unwrap();
         assert!(last_counter > 0);
         for _ in 0..100 {
             assert!(ctap_state
                 .increment_global_signature_counter(&mut env)
                 .is_ok());
-            let next_counter = storage::global_signature_counter(&mut env).unwrap();
+            let next_counter = env.persist().global_signature_counter().unwrap();
             assert!(next_counter > last_counter);
             last_counter = next_counter;
         }
@@ -3314,7 +3325,7 @@ mod test {
             storage::store_credential(&mut env, credential).unwrap();
         }
 
-        storage::set_pin(&mut env, &[0u8; 16], 4).unwrap();
+        env.persist().set_pin(&[0u8; 16], 4).unwrap();
         let pin_uv_auth_param = Some(vec![
             0x1A, 0xA4, 0x96, 0xDA, 0x62, 0x80, 0x28, 0x13, 0xEB, 0x32, 0xB9, 0xF1, 0xD2, 0xA9,
             0xD0, 0xD1,

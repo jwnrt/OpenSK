@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::api::attestation_store::AttestationStore;
 use crate::api::clock::Clock;
 use crate::api::connection::HidConnection;
 use crate::api::crypto::ecdh::Ecdh;
@@ -20,11 +19,11 @@ use crate::api::crypto::ecdsa::Ecdsa;
 use crate::api::crypto::Crypto;
 use crate::api::customization::Customization;
 use crate::api::key_store::KeyStore;
+use crate::api::persist::Persist;
 use crate::api::rng::Rng;
 use crate::api::user_presence::UserPresence;
 use crate::ctap::Channel;
 use alloc::vec::Vec;
-use persistent_store::{Storage, Store};
 
 #[cfg(feature = "std")]
 pub mod test;
@@ -43,20 +42,18 @@ pub type Hkdf<E> = <<E as Env>::Crypto as Crypto>::Hkdf256;
 pub trait Env {
     type Rng: Rng;
     type UserPresence: UserPresence;
-    type Storage: Storage;
+    type Persist: Persist;
     type KeyStore: KeyStore;
     type Write: core::fmt::Write;
     type Customization: Customization;
     type HidConnection: HidConnection;
-    type AttestationStore: AttestationStore;
     type Clock: Clock;
     type Crypto: Crypto;
 
     fn rng(&mut self) -> &mut Self::Rng;
     fn user_presence(&mut self) -> &mut Self::UserPresence;
-    fn store(&mut self) -> &mut Store<Self::Storage>;
+    fn persist(&mut self) -> &mut Self::Persist;
     fn key_store(&mut self) -> &mut Self::KeyStore;
-    fn attestation_store(&mut self) -> &mut Self::AttestationStore;
     fn clock(&mut self) -> &mut Self::Clock;
 
     /// Creates a write instance for debugging.
