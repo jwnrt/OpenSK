@@ -18,6 +18,7 @@ use crate::api::crypto::EC_FIELD_SIZE;
 use crate::ctap::secret::Secret;
 use crate::ctap::status_code::{Ctap2StatusCode, CtapResult};
 use crate::ctap::PIN_AUTH_LENGTH;
+use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::cmp;
@@ -27,6 +28,7 @@ use enum_iterator::IntoEnumIterator;
 
 pub type PersistIter<'a> = Box<dyn Iterator<Item = CtapResult<usize>> + 'a>;
 pub type PersistCredentialIter<'a> = Box<dyn Iterator<Item = CtapResult<(usize, Vec<u8>)>> + 'a>;
+pub type LargeBlobBuffer = Vec<u8>;
 
 /// Stores data that persists across reboots.
 ///
@@ -232,27 +234,48 @@ pub trait Persist {
         self.insert(keys::MIN_PIN_LENGTH_RP_IDS, min_pin_length_rp_ids_bytes)
     }
 
-    // TODO rework LargeBlob
-    // Problem 1: Env should be allowed to choose whether to buffer in memory or persist
-    // Otherwise small RAM devices have limited large blog size.
-    // Problem 2: LargeBlob is a stateful command, but doesn't use the safeguard and infrastructure
-    // of Stateful command. It has to be migrated there.
-    // While doing that, check if PinUvAuthToken timers and StatefulCommand timeouts are working
-    // together correctly.
+    /// Prepares writing a new large blob.
+    ///
+    /// Returns a buffer that is returned to other API calls for potential usage.
+    fn init_large_blob(&mut self, expected_length: usize) -> CtapResult<LargeBlobBuffer> {
+        Ok(Vec::with_capacity(expected_length))
+    }
+
+    /// Writes a large blob chunk to the buffer.
+    ///
+    /// This can be the passed in buffer, or a custom solution.
+    fn write_large_blob_chunk(
+        &mut self,
+        offset: usize,
+        chunk: &[u8],
+        buffer: &mut LargeBlobBuffer,
+    ) -> CtapResult<()> {
+        if buffer.len() != offset {
+            // This should be caught on CTAP level.
+            return Err(Ctap2StatusCode::CTAP2_ERR_VENDOR_INTERNAL_ERROR);
+        }
+        buffer.extend_from_slice(chunk);
+        Ok(())
+    }
+
     /// Reads the byte vector stored as the serialized large blobs array.
     ///
     /// If too few bytes exist at that offset, return the maximum number
     /// available. This includes cases of offset being beyond the stored array.
     ///
-    /// If no large blob is committed to the store, get responds as if an empty
-    /// CBOR array (0x80) was written, together with the 16 byte prefix of its
-    /// SHA256, to a total length of 17 byte (which is the shortest legitimate
-    /// large blob entry possible).
-    fn get_large_blob_array(
+    /// The buffer is passed in when writing is in process.
+    fn get_large_blob<'a>(
         &self,
         mut offset: usize,
         byte_count: usize,
-    ) -> CtapResult<Option<Vec<u8>>> {
+        buffer: Option<&'a LargeBlobBuffer>,
+    ) -> CtapResult<Option<Cow<'a, [u8]>>> {
+        if let Some(buffer) = buffer {
+            let start = cmp::min(offset, buffer.len());
+            let end = offset.saturating_add(byte_count);
+            let end = cmp::min(end, buffer.len());
+            return Ok(Some(Cow::from(&buffer[start..end])));
+        }
         let mut result = Vec::with_capacity(byte_count);
         for key in keys::LARGE_BLOB_SHARDS {
             if offset >= VALUE_LENGTH {
@@ -267,21 +290,21 @@ pub trait Persist {
             }
             let end = cmp::min(end, value.len());
             if end < offset {
-                return Ok(Some(result));
+                return Ok(Some(Cow::from(result)));
             }
             result.extend(&value[offset..end]);
             offset = offset.saturating_sub(VALUE_LENGTH);
         }
-        Ok(Some(result))
+        Ok(Some(Cow::from(result)))
     }
 
     /// Sets a byte vector as the serialized large blobs array.
-    fn commit_large_blob_array(&mut self, large_blob_array: &[u8]) -> CtapResult<()> {
-        debug_assert!(large_blob_array.len() <= keys::LARGE_BLOB_SHARDS.len() * VALUE_LENGTH);
+    fn commit_large_blob_array(&mut self, buffer: &LargeBlobBuffer) -> CtapResult<()> {
+        debug_assert!(buffer.len() <= keys::LARGE_BLOB_SHARDS.len() * VALUE_LENGTH);
         let mut offset = 0;
         for key in keys::LARGE_BLOB_SHARDS {
-            let cur_len = cmp::min(large_blob_array.len().saturating_sub(offset), VALUE_LENGTH);
-            let slice = &large_blob_array[offset..][..cur_len];
+            let cur_len = cmp::min(buffer.len().saturating_sub(offset), VALUE_LENGTH);
+            let slice = &buffer[offset..][..cur_len];
             if slice.is_empty() {
                 self.remove(key)?;
             } else {
